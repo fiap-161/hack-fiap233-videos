@@ -1,0 +1,17 @@
+# Postgres local para desenvolver e testar o serviço de vídeos sem AWS.
+# Uso: docker compose -f docker-compose.local.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dbadmin
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: videosdb
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbadmin -d videosdb"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
