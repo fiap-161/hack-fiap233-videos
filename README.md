@@ -43,7 +43,7 @@ hack-fiap233-videos/
                 └── schema.go   # CreateTableIfNotExists
 ```
 
-## Modelo de domínio (Fase 1)
+## Modelo de domínio
 
 A tabela `videos` possui: `id`, `user_id`, `title`, `description`, `status` (pending | processing | completed | failed), `storage_key`, `result_zip_path`, `error_message`, `created_at`, `updated_at`. Todas as operações são filtradas por `user_id`, obtido do header **`X-User-Id`** repassado pelo API Gateway (Lambda Authorizer).
 
@@ -51,7 +51,7 @@ A tabela `videos` possui: `id`, `user_id`, `title`, `description`, `status` (pen
 
 O schema do banco é versionado na **infra**: `hack-fiap233-infra/migrations/videos/001_initial_schema.sql` (schema final; quando o DB é recriado do zero, só essa migration é aplicada). Aplicar com `./scripts/run_migrations.sh` (variáveis `VIDEOS_DB_*` ou `MIGRATE_VIDEOS_SECRET`). Em ambiente local, o serviço cria a tabela automaticamente no startup (`postgres.CreateTableIfNotExists`).
 
-## Autorização (Fase 2 — identidade via API Gateway)
+## Autorização (via API Gateway)
 
 O serviço não valida JWT nem acessa `JWT_SECRET`. A validação é feita no **API Gateway** (Lambda Authorizer). O Vídeos apenas lê os headers repassados pelo Gateway:
 

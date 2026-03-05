@@ -1,0 +1,18 @@
+info:
+  name: Videos - listar videos
+  type: http
+  seq: 3
+
+http:
+  method: get
+  url: http://localhost:8080/videos/
+  headers:
+    - name: X-User-Id
+      value: "1"
+  auth: inherit
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
