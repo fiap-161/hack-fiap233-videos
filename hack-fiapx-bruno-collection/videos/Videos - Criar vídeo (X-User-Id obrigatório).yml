@@ -1,0 +1,27 @@
+info:
+  name: Videos - Criar vídeo (X-User-Id obrigatório)
+  type: http
+  seq: 1
+
+http:
+  method: post
+  url: http://localhost:8080/videos/
+  headers:
+    - name: Content-Type
+      value: application/json
+    - name: X-User-Id
+      value: "1"
+  body:
+    type: json
+    data: |-
+      {
+        "title": "Meu vídeo",
+        "description": "Descrição do vídeo"
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
