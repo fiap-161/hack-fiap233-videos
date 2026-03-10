@@ -1,4 +1,4 @@
-# Postgres local para desenvolver e testar o serviço de vídeos sem AWS.
+# Postgres + RabbitMQ para desenvolver e testar o serviço de vídeos (Fase 3: upload + fila + worker).
 # Uso: docker compose -f docker-compose.local.yml up -d
 
 services:
@@ -15,3 +15,14 @@ services:
       interval: 2s
       timeout: 2s
       retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 5s
+      timeout: 5s
+      retries: 5

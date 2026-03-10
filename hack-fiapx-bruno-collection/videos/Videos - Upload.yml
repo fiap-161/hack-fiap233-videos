@@ -1,0 +1,35 @@
+info:
+  name: Videos - Upload
+  type: http
+  seq: 4
+
+http:
+  method: post
+  url: http://localhost:8080/videos/upload
+  headers:
+    - name: X-User-Id
+      value: "1"
+    - name: X-User-Email
+      value: user@example.com
+    - name: Content-Type
+      value: multipart/form-data
+  body:
+    type: multipart-form
+    data:
+      - name: file
+        type: file
+        value:
+          - /Users/kamila.serpa/Desktop/ScreenShots/Screen Recording 2026-03-09 at 20.58.42.mov
+      - name: title
+        type: text
+        value: Meu vídeo
+      - name: description
+        type: text
+        value: Teste
+  auth: inherit
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

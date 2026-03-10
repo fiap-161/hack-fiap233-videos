@@ -17,7 +17,7 @@ main.go            # Wiring: db → repo → service → handler; rotas
 ```
 
 - **Ports:** definidos em `application/ports.go`; o serviço depende apenas deles.
-- **Adapters driven:** Postgres implementa `VideoRepository` e `HealthChecker`; no futuro, fila (RabbitMQ) e storage (S3) serão outros adapters driven.
+- **Adapters driven:** Postgres (`VideoRepository`, `HealthChecker`), storage filesystem (`Storage`), fila RabbitMQ (`VideoQueue`), notificador noop (`FailureNotifier`; em prod trocar por SNS), processador ffmpeg (`VideoProcessor`).
 - **Adapter driver:** HTTP traduz request/response e chama o use case; middleware injeta identidade (API Gateway).
 
 ### Estrutura de pastas
@@ -37,10 +37,13 @@ hack-fiap233-videos/
         │       ├── middleware.go
         │       └── handler.go  # Handler → service; DTOs JSON
         └── driven/
-            └── postgres/      # Adapter de saída (persistência)
-                ├── video_repository.go
-                ├── health.go
-                └── schema.go   # CreateTableIfNotExists
+            ├── postgres/      # Persistência (VideoRepository, schema)
+            ├── storage/       # Storage (filesystem; em prod S3/MinIO)
+            ├── queue/         # Fila (RabbitMQ video.process + DLQ)
+            ├── notifier/      # Notificação de falha (noop; em prod SNS)
+            └── processor/     # Processamento vídeo → frames → ZIP (ffmpeg)
+cmd/
+  worker/           # Binário que consome a fila e processa os jobs
 ```
 
 ## Modelo de domínio
@@ -67,10 +70,9 @@ Todas as rotas sob `/videos/` (exceto `health`) passam pelo middleware `requireU
 | GET | `/videos/health` | Health check + status do banco (não exige autenticação) |
 | GET | `/videos/` | Listar vídeos do usuário (exige header `X-User-Id`) |
 | POST | `/videos/` | Criar vídeo (só metadado: `title`, `description`; exige header `X-User-Id`) |
+| POST | `/videos/upload` | Upload de vídeo (multipart: `file` + opcionais `title`, `description`); grava no storage, cria registro `pending` e publica job na fila |
 
 Rotas protegidas: sem `X-User-Id` válido a API retorna **401 Unauthorized**.
-
-**Nota:** O envio do arquivo de vídeo (upload) será feito no endpoint `POST /videos/upload` . O `POST /videos/` atual apenas cria o registro no banco (título e descrição) com status `pending`.
 
 ---
 
@@ -78,7 +80,7 @@ Rotas protegidas: sem `X-User-Id` válido a API retorna **401 Unauthorized**.
 
 Para baixar o repositório e rodar o serviço na sua máquina **sem usar a infraestrutura da AWS** (EKS, RDS, etc.):
 
-### 1. Subir o Postgres
+### 1. Subir Postgres e RabbitMQ
 
 Na raiz do repositório `hack-fiap233-videos`:
 
@@ -86,9 +88,9 @@ Na raiz do repositório `hack-fiap233-videos`:
 docker compose -f docker-compose.local.yml up -d
 ```
 
-Isso sobe um PostgreSQL com o banco `videosdb` na porta **5432**.
+Isso sobe PostgreSQL (`videosdb` na porta 5432) e RabbitMQ (AMQP 5672, management 15672).
 
-### 2. Variáveis de ambiente e rodar o serviço
+### 2. Variáveis de ambiente e rodar o serviço (API)
 
 ```bash
 export PORT=8080
@@ -98,25 +100,51 @@ export DB_USERNAME=dbadmin
 export DB_PASSWORD=localdev
 export DB_NAME=videosdb
 export DB_SSLMODE=disable
+export STORAGE_BASE_PATH=./data
+export AMQP_URL=amqp://guest:guest@localhost:5672/
+export QUEUE_NAME=video.process
+export QUEUE_DLQ=video.process.dlq
 
 go run main.go
 ```
 
-### 3. Testar
+Se `AMQP_URL` não for definido, o serviço sobe sem fila (upload grava no storage e cria o vídeo, mas não enfileira job).
+
+### 3. Rodar o worker (processamento assíncrono)
+
+Em outro terminal, com as mesmas variáveis de DB e storage (e obrigatório `AMQP_URL`):
+
+```bash
+export DB_HOST=localhost
+export DB_PORT=5432
+export DB_USERNAME=dbadmin
+export DB_PASSWORD=localdev
+export DB_NAME=videosdb
+export DB_SSLMODE=disable
+export STORAGE_BASE_PATH=./data
+export AMQP_URL=amqp://guest:guest@localhost:5672/
+
+go run ./cmd/worker
+```
+
+O worker consome a fila `video.process`, baixa o vídeo do storage, extrai frames (ffmpeg) e gera um ZIP; atualiza o status para `completed` ou `failed`. Em falha, o notificador (noop em dev) loga; em produção pode publicar no SNS.
+
+### 4. Testar
 
 ```bash
 # Health
 curl http://localhost:8080/videos/health
 
-# Criar vídeo (X-User-Id obrigatório)
-curl -X POST http://localhost:8080/videos/ -H "Content-Type: application/json" -H "X-User-Id: 1" \
-  -d '{"title":"Meu vídeo","description":"Descrição do vídeo"}'
+# Upload de vídeo (multipart; X-User-Id e X-User-Email recomendados)
+curl -X POST http://localhost:8080/videos/upload \
+  -H "X-User-Id: 1" -H "X-User-Email: user@example.com" \
+  -F "file=@/caminho/para/video.mp4" -F "title=Meu vídeo" -F "description=Teste"
 
-# Listar vídeos (header X-User-Id obrigatório; em produção vem do API Gateway)
+# Listar vídeos (status pending/processing/completed/failed)
 curl -H "X-User-Id: 1" http://localhost:8080/videos/
 ```
 
-Para derrubar o Postgres: `docker compose -f docker-compose.local.yml down`.
+Para derrubar: `docker compose -f docker-compose.local.yml down`.
 
 ### Pré-requisitos
 
