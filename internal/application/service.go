@@ -45,6 +45,39 @@ func (s *VideoService) ListByUser(ctx context.Context, userID int) ([]domain.Vid
 	return s.repo.ListByUserID(ctx, userID)
 }
 
+// GetByIDForUser retorna o vídeo só se pertencer ao userID; else ErrVideoNotFound.
+func (s *VideoService) GetByIDForUser(ctx context.Context, userID, videoID int) (domain.Video, error) {
+	v, err := s.repo.GetByID(ctx, videoID)
+	if err != nil {
+		return domain.Video{}, ErrVideoNotFound
+	}
+	if v.UserID != userID {
+		return domain.Video{}, ErrVideoNotFound
+	}
+	return v, nil
+}
+
+// DownloadResultZip retorna o stream do ZIP e um nome sugerido para download (ex: video_123.zip).
+// Só permite se o vídeo for do usuário e estiver completed
+func (s *VideoService) DownloadResultZip(ctx context.Context, userID, videoID int) (io.ReadCloser, string, error) {
+	v, err := s.GetByIDForUser(ctx, userID, videoID)
+	if err != nil {
+		return nil, "", err
+	}
+	if v.Status != domain.StatusCompleted {
+		return nil, "", ErrInvalidStatus
+	}
+	if v.ResultZipPath == "" {
+		return nil, "", ErrStorageKeyMissing
+	}
+	reader, err := s.storage.Download(ctx, v.ResultZipPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("storage download: %w", err)
+	}
+	filename := fmt.Sprintf("video_%d.zip", videoID)
+	return reader, filename, nil
+}
+
 // CreateVideo cria um vídeo com status pending (só metadado; upload usa UploadVideo).
 func (s *VideoService) CreateVideo(ctx context.Context, userID int, title, description string) (domain.Video, error) {
 	if title == "" {
@@ -53,7 +86,7 @@ func (s *VideoService) CreateVideo(ctx context.Context, userID int, title, descr
 	return s.repo.Create(ctx, userID, title, description)
 }
 
-// UploadVideo salva o arquivo no storage, cria o registro com status pending e publica job na fila.
+// UploadVideo salva o arquivo no storage, cria o registro com status pending e publica job na fila
 func (s *VideoService) UploadVideo(ctx context.Context, userID int, userEmail, title, description string, file io.Reader, contentType string) (domain.Video, error) {
 	if title == "" {
 		title = "video"

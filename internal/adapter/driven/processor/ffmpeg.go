@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,12 +29,13 @@ func NewFFmpegProcessor(framesDir string) *FFmpegProcessor {
 }
 
 // Process lê o vídeo em videoLocalPath, extrai frames (ou gera placeholder) e retorna o path do ZIP.
+// O diretório temporário não é removido aqui: o chamador (ProcessJob) abre o ZIP e faz upload
+// para o storage antes de retornar; remover workDir aqui quebraria o download (arquivo já apagado).
 func (p *FFmpegProcessor) Process(ctx context.Context, videoLocalPath string) (zipLocalPath string, err error) {
 	workDir, err := os.MkdirTemp(p.FramesDir, "video-process-*")
 	if err != nil {
 		return "", fmt.Errorf("mkdir temp: %w", err)
 	}
-	defer os.RemoveAll(workDir)
 
 	framesDir := filepath.Join(workDir, "frames")
 	if err := os.MkdirAll(framesDir, 0755); err != nil {
@@ -42,6 +44,7 @@ func (p *FFmpegProcessor) Process(ctx context.Context, videoLocalPath string) (z
 
 	// Tenta extrair 1 frame a cada ~1s com ffmpeg; se não tiver ffmpeg, cria placeholder
 	if err := p.extractFrames(ctx, videoLocalPath, framesDir); err != nil {
+		log.Printf("[processor] ffmpeg extract failed (install ffmpeg for real frames): %v", err)
 		// Fallback: criar um arquivo placeholder para o ZIP não ficar vazio
 		_ = os.WriteFile(filepath.Join(framesDir, "readme.txt"), []byte("Frames could not be extracted (ffmpeg not available or error). Video was uploaded successfully.\n"), 0644)
 	}

@@ -2,7 +2,10 @@ package http
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/hack-fiap233/videos/internal/application"
 	"github.com/hack-fiap233/videos/internal/domain"
@@ -56,18 +59,51 @@ func (h *VideoHandler) Health(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "videos", "db": "connected"})
 }
 
-// Videos despacha GET (listar) e POST (criar); método não permitido retorna 405.
+// Videos despacha por path: GET/POST /videos/ (listar/criar), GET /videos/:id (detalhe), GET /videos/:id/download (ZIP).
 func (h *VideoHandler) Videos(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	switch r.Method {
-	case http.MethodGet:
-		h.listVideos(w, r)
-	case http.MethodPost:
-		h.createVideo(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+	path := r.URL.Path
+	if path == "/videos/" || path == "/videos" {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			h.listVideos(w, r)
+		case http.MethodPost:
+			h.createVideo(w, r)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+		}
+		return
 	}
+	rest := strings.TrimPrefix(path, "/videos/")
+	rest = strings.TrimPrefix(rest, "/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		return
+	}
+	videoID, err := strconv.Atoi(parts[0])
+	if err != nil || videoID <= 0 {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		return
+	}
+	if len(parts) == 2 && parts[1] == "download" {
+		h.downloadZip(w, r, videoID)
+		return
+	}
+	if len(parts) == 1 {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+			return
+		}
+		h.getVideoByID(w, r, videoID)
+		return
+	}
+	w.WriteHeader(http.StatusNotFound)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
 }
 
 func (h *VideoHandler) listVideos(w http.ResponseWriter, r *http.Request) {
@@ -172,4 +208,58 @@ func (h *VideoHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(domainToResponse(v))
+}
+
+// getVideoByID responde GET /videos/:id com o detalhe do vídeo (só do dono).
+func (h *VideoHandler) getVideoByID(w http.ResponseWriter, r *http.Request, videoID int) {
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing or invalid X-User-Id header"})
+		return
+	}
+	v, err := h.service.GetByIDForUser(r.Context(), userID, videoID)
+	if err != nil {
+		if err == application.ErrVideoNotFound {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "video not found"})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(domainToResponse(v))
+}
+
+// downloadZip responde GET /videos/:id/download com o arquivo ZIP (só se completed e dono).
+func (h *VideoHandler) downloadZip(w http.ResponseWriter, r *http.Request, videoID int) {
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing or invalid X-User-Id header"})
+		return
+	}
+	reader, filename, err := h.service.DownloadResultZip(r.Context(), userID, videoID)
+	if err != nil {
+		if err == application.ErrVideoNotFound {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "video not found"})
+			return
+		}
+		if err == application.ErrInvalidStatus {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "video not ready for download (status must be completed)"})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	defer reader.Close()
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, reader)
 }
