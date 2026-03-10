@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/go-chi/chi/v5"
 	httpadapter "github.com/hack-fiap233/videos/internal/adapter/driver/http"
 	"github.com/hack-fiap233/videos/internal/adapter/driven/notifier"
 	"github.com/hack-fiap233/videos/internal/adapter/driven/postgres"
@@ -54,13 +55,21 @@ func main() {
 	)
 	handler := httpadapter.NewVideoHandler(videoSvc, videoRepo)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/videos/health", handler.Health)
-	mux.HandleFunc("/videos/upload", httpadapter.RequireUserID(handler.Upload))
-	mux.HandleFunc("/videos/", httpadapter.RequireUserID(handler.Videos))
+	r := chi.NewRouter()
+	r.Route("/videos", func(r chi.Router) {
+		r.Get("/health", handler.Health)
+		r.Group(func(r chi.Router) {
+			r.Use(httpadapter.RequireUserIDHandler)
+			r.Post("/upload", handler.Upload)
+			r.Get("/", handler.List)
+			r.Post("/", handler.Create)
+			r.Get("/{id}", handler.GetByID)
+			r.Get("/{id}/download", handler.Download)
+		})
+	})
 
 	log.Printf("Videos service listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }
 
 func getEnv(key, defaultVal string) string {

@@ -18,7 +18,7 @@ main.go            # Wiring: db → repo → service → handler; rotas
 
 - **Ports:** definidos em `application/ports.go`; o serviço depende apenas deles.
 - **Adapters driven:** Postgres (`VideoRepository`, `HealthChecker`), storage filesystem (`Storage`), fila RabbitMQ (`VideoQueue`), notificador noop (`FailureNotifier`; em prod trocar por SNS), processador ffmpeg (`VideoProcessor`).
-- **Adapter driver:** HTTP traduz request/response e chama o use case; middleware injeta identidade (API Gateway).
+- **Adapter driver:** HTTP traduz request/response e chama o use case; middleware injeta identidade (API Gateway). Rotas com [chi](https://github.com/go-chi/chi) (uma rota por path; parâmetros `{id}` extraídos pelo router).
 
 ### Estrutura de pastas
 ```
@@ -71,6 +71,8 @@ Todas as rotas sob `/videos/` (exceto `health`) passam pelo middleware `requireU
 | GET | `/videos/` | Listar vídeos do usuário (exige header `X-User-Id`) |
 | POST | `/videos/` | Criar vídeo (só metadado: `title`, `description`; exige header `X-User-Id`) |
 | POST | `/videos/upload` | Upload de vídeo (multipart: `file` + opcionais `title`, `description`); grava no storage, cria registro `pending` e publica job na fila |
+| GET | `/videos/:id` | Detalhe do vídeo (status e metadados); só retorna se for do usuário (`X-User-Id`) |
+| GET | `/videos/:id/download` | Download do ZIP de resultado; só se o vídeo for do usuário e status `completed` (retorna 400 se ainda pending/processing/failed) |
 
 Rotas protegidas: sem `X-User-Id` válido a API retorna **401 Unauthorized**.
 
@@ -112,6 +114,8 @@ Se `AMQP_URL` não for definido, o serviço sobe sem fila (upload grava no stora
 
 ### 3. Rodar o worker (processamento assíncrono)
 
+Instale o **ffmpeg** (ver pré-requisitos abaixo) para o ZIP conter os frames extraídos; sem ele o download traz só um readme placeholder.
+
 Em outro terminal, com as mesmas variáveis de DB e storage (e obrigatório `AMQP_URL`):
 
 ```bash
@@ -142,6 +146,13 @@ curl -X POST http://localhost:8080/videos/upload \
 
 # Listar vídeos (status pending/processing/completed/failed)
 curl -H "X-User-Id: 1" http://localhost:8080/videos/
+
+# Detalhe de um vídeo (substitua 1 pelo id)
+curl -H "X-User-Id: 1" http://localhost:8080/videos/1
+
+# Download do ZIP (só quando status for completed)
+# URL antes do -o para importar corretamente no Bruno/Postman
+curl -H "X-User-Id: 1" "http://localhost:8080/videos/1/download" -o resultado.zip
 ```
 
 Para derrubar: `docker compose -f docker-compose.local.yml down`.
@@ -150,6 +161,10 @@ Para derrubar: `docker compose -f docker-compose.local.yml down`.
 
 - [Go](https://go.dev/dl/) 1.21+
 - [Docker](https://docs.docker.com/get-docker/) (para o Postgres local)
+- **ffmpeg** — usado pelo worker para extrair frames do vídeo e gerar o ZIP. Sem ele, o download traz só um placeholder ("Frames could not be extracted...").
+  - **macOS:** `brew install ffmpeg`
+  - **Ubuntu/Debian:** `sudo apt install ffmpeg`
+  - Confirme no terminal: `ffmpeg -version`
 
 ---
 

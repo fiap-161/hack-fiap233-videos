@@ -1,0 +1,18 @@
+info:
+  name: Videos - Download
+  type: http
+  seq: 6
+
+http:
+  method: get
+  url: http://localhost:8080/videos/1/download
+  headers:
+    - name: X-User-Id
+      value: "1"
+  auth: inherit
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

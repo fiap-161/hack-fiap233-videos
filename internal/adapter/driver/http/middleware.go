@@ -32,6 +32,23 @@ func RequireUserID(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// RequireUserIDHandler é a versão do middleware que aceita http.Handler (para uso com chi).
+func RequireUserIDHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := userIDFromRequest(r)
+		if !ok {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing or invalid X-User-Id header"})
+			return
+		}
+		email := r.Header.Get(HeaderUserEmail)
+		ctx := context.WithValue(r.Context(), contextKeyUserID, userID)
+		ctx = context.WithValue(ctx, contextKeyUserEmail, email)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 func userIDFromRequest(r *http.Request) (int, bool) {
 	s := r.Header.Get(HeaderUserID)
 	if s == "" {
