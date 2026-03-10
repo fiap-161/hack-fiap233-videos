@@ -18,7 +18,7 @@ main.go            # Wiring: db → repo → service → handler; rotas
 
 - **Ports:** definidos em `application/ports.go`; o serviço depende apenas deles.
 - **Adapters driven:** Postgres (`VideoRepository`, `HealthChecker`), storage filesystem (`Storage`), fila RabbitMQ (`VideoQueue`), notificador noop (`FailureNotifier`; em prod trocar por SNS), processador ffmpeg (`VideoProcessor`).
-- **Adapter driver:** HTTP traduz request/response e chama o use case; middleware injeta identidade (API Gateway).
+- **Adapter driver:** HTTP traduz request/response e chama o use case; middleware injeta identidade (API Gateway). Rotas com [chi](https://github.com/go-chi/chi) (uma rota por path; parâmetros `{id}` extraídos pelo router).
 
 ### Estrutura de pastas
 ```
