@@ -5,7 +5,7 @@ info:
 
 http:
   method: get
-  url: http://localhost:8080/videos/1/downloadresultado.zip
+  url: http://localhost:8080/videos/1/download
   headers:
     - name: X-User-Id
       value: "1"
