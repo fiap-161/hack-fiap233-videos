@@ -8,7 +8,10 @@ import (
 	"os"
 
 	httpadapter "github.com/hack-fiap233/videos/internal/adapter/driver/http"
+	"github.com/hack-fiap233/videos/internal/adapter/driven/notifier"
 	"github.com/hack-fiap233/videos/internal/adapter/driven/postgres"
+	"github.com/hack-fiap233/videos/internal/adapter/driven/queue"
+	"github.com/hack-fiap233/videos/internal/adapter/driven/storage"
 	"github.com/hack-fiap233/videos/internal/application"
 	_ "github.com/lib/pq"
 )
@@ -24,18 +27,47 @@ func main() {
 		log.Fatalf("Create table: %v", err)
 	}
 
-	// Wiring: ports ← adapters (hexagonal)
 	videoRepo := postgres.NewVideoRepository(db)
-	videoSvc := application.NewVideoService(videoRepo)
-	handler := httpadapter.NewVideoHandler(videoSvc, videoRepo) // repo implementa HealthChecker
+	storageBase := os.Getenv("STORAGE_BASE_PATH")
+	if storageBase == "" {
+		storageBase = "./data"
+	}
+	st, err := storage.NewFilesystemStorage(storageBase)
+	if err != nil {
+		log.Fatalf("storage: %v", err)
+	}
 
-	// Rotas: health público; demais exigem X-User-Id (API Gateway)
+	var videoQueue application.VideoQueue
+	if amqpURL := os.Getenv("AMQP_URL"); amqpURL != "" {
+		q, err := queue.NewRabbitMQQueue(amqpURL, getEnv("QUEUE_NAME", "video.process"), getEnv("QUEUE_DLQ", "video.process.dlq"))
+		if err != nil {
+			log.Printf("queue disabled: %v", err)
+		} else {
+			videoQueue = q
+			defer func() { _ = q.Close() }()
+		}
+	}
+
+	videoSvc := application.NewVideoService(videoRepo, st,
+		application.WithQueue(videoQueue),
+		application.WithNotifier(notifier.NewNoopNotifier()),
+	)
+	handler := httpadapter.NewVideoHandler(videoSvc, videoRepo)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/videos/health", handler.Health)
+	mux.HandleFunc("/videos/upload", httpadapter.RequireUserID(handler.Upload))
 	mux.HandleFunc("/videos/", httpadapter.RequireUserID(handler.Videos))
 
 	log.Printf("Videos service listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
+}
+
+func getEnv(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
 }
 
 func initDB() *sql.DB {

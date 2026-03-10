@@ -8,7 +8,6 @@ import (
 	"github.com/hack-fiap233/videos/internal/domain"
 )
 
-// Adapter driver HTTP: traduz request/response e chama o use case.
 type VideoHandler struct {
 	service *application.VideoService
 	health  application.HealthChecker
@@ -46,7 +45,7 @@ func domainToResponse(v domain.Video) videoResponse {
 	}
 }
 
-// Não exige autenticação).
+// Não exige autenticação)
 func (h *VideoHandler) Health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := h.health.Ping(r.Context()); err != nil {
@@ -121,6 +120,56 @@ func (h *VideoHandler) createVideo(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(domainToResponse(v))
+}
+
+// Upload trata POST /videos/upload (multipart): arquivo de vídeo + opcionais title, description.
+func (h *VideoHandler) Upload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+		return
+	}
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing or invalid X-User-Id header"})
+		return
+	}
+	userEmail := UserEmailFromContext(r.Context())
+
+	const maxFormMem = 32 << 20 // 32 MiB
+	if err := r.ParseMultipartForm(maxFormMem); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid multipart form"})
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing or invalid file field"})
+		return
+	}
+	defer file.Close()
+
+	title := r.FormValue("title")
+	if title == "" {
+		title = header.Filename
+	}
+	description := r.FormValue("description")
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	v, err := h.service.UploadVideo(r.Context(), userID, userEmail, title, description, file, contentType)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(domainToResponse(v))
 }
